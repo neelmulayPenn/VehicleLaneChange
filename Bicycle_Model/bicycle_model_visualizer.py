@@ -60,7 +60,15 @@ class VehicleBicycleVisualizer:
         )
         self.front_axle_line, = self.ax.plot([], [], 'k-', lw=2, zorder=1)
         self.rear_axle_line, = self.ax.plot([], [], 'k-', lw=2, zorder=1)
-        self.front_wheel_patch = self.ax.fill([], [], 'b', edgecolor='k', zorder=3)
+        # self.front_wheel_patch = self.ax.fill([], [], 'b', edgecolor='k', zorder=3)
+        self.front_wheel_patch = self.ax.fill(
+            self.front_wheel[0, :],
+            self.front_wheel[1, :],
+            facecolor='b',
+            edgecolor='k',
+            zorder=3
+        )
+
 
         # Optional elements
         if self.show_velocity:
@@ -104,8 +112,10 @@ class VehicleBicycleVisualizer:
         self.body_patch[0].get_path().vertices[:, 1] = body_xy[1, :]
         self.front_axle_line.set_data(front_axle_xy[0, :], front_axle_xy[1, :])
         self.rear_axle_line.set_data(rear_axle_xy[0, :], rear_axle_xy[1, :])
-        self.front_wheel_patch[0].get_path().vertices[:, 0] = wheel_xy[0, :]
-        self.front_wheel_patch[0].get_path().vertices[:, 1] = wheel_xy[1, :]
+        wheel_path = self.front_wheel_patch[0].get_path()
+        wheel_path.vertices[:, 0] = wheel_xy[0, :]
+        wheel_path.vertices[:, 1] = wheel_xy[1, :]
+
 
         # Velocity vector
         if self.show_velocity:

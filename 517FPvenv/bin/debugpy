@@ -1,0 +1,7 @@
+#!/Users/brianfok/Documents/GitHub/MEAM517_Final_Project/517FPvenv/bin/python
+import sys
+from debugpy.server.cli import main
+if __name__ == '__main__':
+    if sys.argv[0].endswith('.exe'):
+        sys.argv[0] = sys.argv[0][:-4]
+    sys.exit(main())

@@ -14,13 +14,15 @@ def simulate_bicycle_model(x0, tf, bicycle):
     u = [np.zeros((2,))]
     t = [t0]
 
-    while np.linalg.norm(np.array(x[-1][0:2])) > 1e-3 and t[-1] < tf:
+    while t[-1] < tf:
         current_time = t[-1]
         current_x = x[-1]
         current_u_command = np.zeros(2)
         
         #TODO:compute control input u = (steer angle, longitudinal accel)
-        current_u_real = 0
+        current_u_command = np.array([0.0, 0.0])   # steering, accel
+        current_u_real = current_u_command.copy()
+        current_u_real[0] = np.clip(current_u_real[0], -bicycle.d_limit, bicycle.d_limit)
 
         #apply control input limits
         current_d_real = np.clip(current_u_command[0], -bicycle.d_limit, bicycle.d_limit)
