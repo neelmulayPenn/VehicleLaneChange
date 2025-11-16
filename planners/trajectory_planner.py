@@ -21,6 +21,9 @@ def make_ref_function(intent: str,
     """
     X,Y,psi,vx,vy,w = ego_state  # aligns with your model state
 
+    # Suggest a sampling time based on horizon
+    dt_suggest = min(0.1, max(0.02, horizon_s/200.0))
+
     # Compute current and target lateral centers
     y_cur = Y
     y_tar = lane_center_y(target_lane, y0=0.0)

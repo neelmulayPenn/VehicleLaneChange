@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 import numpy as np
 from pydrake.systems.framework import LeafSystem, BasicVector
-from pydrake.solvers.mathematicalprogram import MathematicalProgram
-from pydrake.solvers.snopt import SnoptSolver
-from math import tan, cos, sin
+from pydrake.solvers import MathematicalProgram, SnoptSolver
 
 
 class DrakeMPCConfig:
@@ -12,13 +10,13 @@ class DrakeMPCConfig:
     T = 15  # horizon
     DT = 0.1
 
-    # vehicle params
-    WB = 0.33
-    MAX_STEER = 0.4189 * 1.75
-    MIN_STEER = -0.4189 * 1.75
-    MAX_SPEED = 6.0
+    # vehicle params (must match bicycle model: Lf=1.2, Lr=1.2)
+    WB = 2.4  # wheelbase = Lf + Lr
+    MAX_STEER = np.deg2rad(30)  # match bicycle model d_limit
+    MIN_STEER = -np.deg2rad(30)
+    MAX_SPEED = 25.0  # allow higher speeds
     MIN_SPEED = 0.0
-    MAX_ACCEL = 2.0
+    MAX_ACCEL = 3.0  # allow stronger acceleration
 
     # cost weights
     Q = np.diag([10.0, 10.0, 5.0, 8.0])
@@ -63,6 +61,36 @@ class DrakeMPC(LeafSystem):
             x0, u0, self.DT
         )
         return A_d, B_d
+    
+    # ------------------------------------------------------------
+    # Discrete Kinematic Bicycle Model (Euler step)
+    # State x = [x, y, v, yaw], control u = [a, delta]
+    # ------------------------------------------------------------
+    def discrete_dynamics(self, x, u):
+        cfg = self.cfg
+
+        x_pos = x[0]
+        y_pos = x[1]
+        v     = x[2]
+        yaw   = x[3]
+
+        a     = u[0]
+        delta = u[1]
+
+        # Continuous-time derivatives
+        dx   = v * np.cos(yaw)
+        dy   = v * np.sin(yaw)
+        dv   = a
+        dyaw = v / cfg.WB * np.tan(delta)
+
+        # Explicit Euler step to get x_{k+1}
+        return np.array([
+            x_pos + cfg.DT * dx,
+            y_pos + cfg.DT * dy,
+            v     + cfg.DT * dv,
+            yaw   + cfg.DT * dyaw,
+        ])
+
 
     # ------------------------------------------------------------
     # MPC Solve Step
@@ -71,41 +99,46 @@ class DrakeMPC(LeafSystem):
         cfg = self.cfg
         prog = MathematicalProgram()
 
+        # Coerce shapes
+        x0 = np.asarray(x0, dtype=float).reshape(cfg.NX,)
+        ref = np.asarray(ref, dtype=float).reshape(cfg.NX, cfg.T + 1)
+
         # Decision vars
         x = prog.NewContinuousVariables(cfg.NX, cfg.T + 1, "x")
         u = prog.NewContinuousVariables(cfg.NU, cfg.T, "u")
 
-        # Initial state
-        prog.AddConstraint(x[:, 0] == x0)
+        # ----- Initial state: add constraints component-wise -----
+        for i in range(cfg.NX):
+            prog.AddLinearConstraint(x[i, 0] == x0[i])
 
-        # Dynamics constraints
+        # ----- Dynamics constraints -----
         for k in range(cfg.T):
             xk = x[:, k]
             uk = u[:, k]
             x_next = x[:, k + 1]
 
-            # Use explicit Euler
-            x_dyn = self.dynamics(xk, uk)
-            prog.AddConstraint(x_next == x_dyn)
+            x_dyn = self.discrete_dynamics(xk, uk)
+            for i in range(cfg.NX):
+                prog.AddConstraint(x_next[i] == x_dyn[i])
 
-        # State bounds
+        # ----- State bounds -----
         for k in range(cfg.T + 1):
             prog.AddConstraint(x[2, k] <= cfg.MAX_SPEED)   # v
             prog.AddConstraint(x[2, k] >= cfg.MIN_SPEED)
 
-        # Input bounds
+        # ----- Input bounds -----
         prog.AddBoundingBoxConstraint(-cfg.MAX_ACCEL, cfg.MAX_ACCEL, u[0, :])
         prog.AddBoundingBoxConstraint(cfg.MIN_STEER, cfg.MAX_STEER, u[1, :])
 
-        # Objective function
-        cost = 0
+        # ----- Objective function -----
+        cost = 0.0
 
-        # Tracking cost
+        # Tracking cost over horizon
         for k in range(cfg.T):
             e = x[:, k] - ref[:, k]
             cost += e @ cfg.Q @ e
 
-        # terminal
+        # Terminal cost
         eT = x[:, cfg.T] - ref[:, cfg.T]
         cost += eT @ cfg.Qf @ eT
 
@@ -113,7 +146,7 @@ class DrakeMPC(LeafSystem):
         for k in range(cfg.T):
             cost += u[:, k] @ cfg.R @ u[:, k]
 
-        # Smoothness
+        # Input smoothness
         for k in range(cfg.T - 1):
             du = u[:, k + 1] - u[:, k]
             cost += du @ cfg.Rd @ du
@@ -123,11 +156,12 @@ class DrakeMPC(LeafSystem):
         result = self.solver.Solve(prog)
 
         if not result.is_success():
-            print("WARNING: MPC failed; returning zero control")
+            # You can log more info here if you like
+            print("WARNING: MPC solve failed; returning zero control")
             return np.array([0.0, 0.0])
 
         u0 = result.GetSolution(u[:, 0])
-        return u0
+        return np.array(u0).reshape(cfg.NU,)
 
     # ------------------------------------------------------------
     # Drake Output Port: returns control command
