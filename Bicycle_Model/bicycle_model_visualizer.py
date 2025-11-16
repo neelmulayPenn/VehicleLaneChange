@@ -143,6 +143,13 @@ def create_animation(vis, x_traj, u_traj, dt):
         u_traj: ndarray (2, N)
         dt: float timestep [s]
     """
+    pad = 5.0  # padding around trajectory
+    X = x_traj[0, :]
+    Y = x_traj[1, :]
+    xmin, xmax = X.min() - pad, X.max() + pad
+    ymin, ymax = Y.min() - pad, Y.max() + pad
+    vis.ax.set_xlim(xmin, xmax)
+    vis.ax.set_ylim(ymin, ymax)
     def update(i):
         vis.draw(x_traj[:, i], u_traj[:, i], i * dt)
         return []
