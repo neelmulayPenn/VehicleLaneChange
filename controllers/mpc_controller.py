@@ -2,25 +2,26 @@
 import numpy as np
 from pydrake.systems.framework import LeafSystem, BasicVector
 from pydrake.solvers import MathematicalProgram, SnoptSolver
-
+from Bicycle_Model.bicycle_model_dynamics import VehicleBicycleModel
 
 class DrakeMPCConfig:
-    NX = 4  # [x, y, v, yaw]
-    NU = 2  # [a, delta]
-    T = 15  # horizon
+    NX = 6  # [x, y, psi, vx, vy, w] (positions(2), yaw angle(1), velocities(2), yaw rate(1))
+    NU = 2  # [delta, a] (steering angle and longitudinal accel)
+    T = 15  # time horizon (sec)
     DT = 0.1
 
-    # vehicle params (must match bicycle model: Lf=1.2, Lr=1.2)
-    WB = 2.4  # wheelbase = Lf + Lr
+    # vehicle params (must match bicycle model: Lf=1.1, Lr=1.1)
+    WB = 2.2  # wheelbase = Lf + Lr
     MAX_STEER = np.deg2rad(30)  # match bicycle model d_limit
     MIN_STEER = -np.deg2rad(30)
-    MAX_SPEED = 25.0  # allow higher speeds
+    MAX_SPEED = 45  # m/s (approx 100mph)
     MIN_SPEED = 0.0
-    MAX_ACCEL = 3.0  # allow stronger acceleration
+    MAX_ACCEL = 4.0  #m/s^2 
 
     # cost weights
-    Q = np.diag([10.0, 10.0, 5.0, 8.0])
-    Qf = np.diag([20.0, 20.0, 10.0, 15.0])
+    # weights might need adjusting later
+    Q = np.diag([10.0, 10.0, 5.0, 10.0, 10.0, 5])
+    Qf = np.diag([10.0, 10.0, 5.0, 10.0, 10.0, 5])
     R = np.diag([0.1, 10.0])
     Rd = np.diag([0.1, 10.0])
 
@@ -42,6 +43,8 @@ class DrakeMPC(LeafSystem):
         #self.ref_callback = ref_traj_callback
         self.ref_provider = reference_provider
 
+        #set up vehicle bicycle model with parameters from other files
+        self.model = VehicleBicycleModel(m = 1000, IZ = 2500, Lf=1.1, Lr = 1.1, Cf = 80000, Cr = 80000, d_limit = np.deg2rad(30))
         # Input port: full vehicle state [x, y, v, yaw]
         self.DeclareVectorInputPort("state", BasicVector(self.cfg.NX))
 
@@ -54,11 +57,12 @@ class DrakeMPC(LeafSystem):
     # ------------------------------------------------------------
     # Discrete Kinematic Bicycle Model (same as ROS MPC)
     # ------------------------------------------------------------
-    def linearized_discrete_dynamics(self, x0):
-        # u0 = zero input linearization  
-        u0 = np.array([0.0, 0.0])
+    def linearized_discrete_dynamics(self, x0, u0):
+        x0 = np.asarray(x0, dtype=float)
+        u0 = np.asarray(u0, dtype=float)
+
         A_d, B_d = self.model.discrete_time_linearized_dynamics(
-            x0, u0, self.DT
+            x0, u0, self.cfg.DT
         )
         return A_d, B_d
     
@@ -67,6 +71,7 @@ class DrakeMPC(LeafSystem):
     # State x = [x, y, v, yaw], control u = [a, delta]
     # ------------------------------------------------------------
     def discrete_dynamics(self, x, u):
+        '''old version not using functions from bicycle_model_dynamics.py
         cfg = self.cfg
 
         x_pos = x[0]
@@ -90,8 +95,16 @@ class DrakeMPC(LeafSystem):
             v     + cfg.DT * dv,
             yaw   + cfg.DT * dyaw,
         ])
+    '''
+    # new version
+        x = np.asarray(x)
+        u = np.asarray(u)
 
+        # Use the continuous dynamics from your model
+        xdot = self.model.continuous_time_full_dynamics(x, u)
 
+        # Euler discretization
+        return x + self.cfg.DT * xdot
     # ------------------------------------------------------------
     # MPC Solve Step
     # ------------------------------------------------------------
@@ -123,12 +136,13 @@ class DrakeMPC(LeafSystem):
 
         # ----- State bounds -----
         for k in range(cfg.T + 1):
-            prog.AddConstraint(x[2, k] <= cfg.MAX_SPEED)   # v
-            prog.AddConstraint(x[2, k] >= cfg.MIN_SPEED)
+            # vector sum of X and Y velocity components
+            prog.AddConstraint(np.linalg.norm(x[3, k], x[4,k] <= cfg.MAX_SPEED))
+            prog.AddConstraint(np.linalg.norm(x[3, k], x[4,k] >= cfg.MIN_SPEED))
 
         # ----- Input bounds -----
-        prog.AddBoundingBoxConstraint(-cfg.MAX_ACCEL, cfg.MAX_ACCEL, u[0, :])
-        prog.AddBoundingBoxConstraint(cfg.MIN_STEER, cfg.MAX_STEER, u[1, :])
+        prog.AddBoundingBoxConstraint(-cfg.MAX_ACCEL, cfg.MAX_ACCEL, u[1, :])
+        prog.AddBoundingBoxConstraint(cfg.MIN_STEER, cfg.MAX_STEER, u[0, :])
 
         # ----- Objective function -----
         cost = 0.0
