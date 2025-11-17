@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.animation as animation
 
 class VehicleBicycleVisualizer:
-    def __init__(self, Lf=1.2, Lr=1.6, width=1.0, show_velocity=True, show_trail=True):
+    def __init__(self, Lf=1.1, Lr=1.1, width=1.0, show_velocity=True, show_trail=True):
         """
         Args:
             Lf: float - distance from CG to front axle [m]
@@ -24,6 +24,11 @@ class VehicleBicycleVisualizer:
         self.ax.set_xlim(-10, 10)
         self.ax.set_ylim(-10, 10)
         self.title = self.ax.set_title("Vehicle Visualization")
+
+        # Initialize traffic containers (safe default)
+        self.traffic = []
+        self.traffic_patches = []
+        self.traffic_body = None
 
         # Define geometry
         length = Lf + Lr
@@ -130,9 +135,51 @@ class VehicleBicycleVisualizer:
 
         self.title.set_text(f"t = {t:.2f} s")
 
+        
+        for veh, patch in zip(self.traffic, self.traffic_patches):
+            Xv, Yv = veh.x, veh.y
+            psi_v = 0.0  # OtherVehicle always points +X
+
+            Rv = np.array([
+                [np.cos(psi_v), -np.sin(psi_v)],
+                [np.sin(psi_v),  np.cos(psi_v)]
+            ])
+
+            body_xy = Rv @ self.traffic_body + np.array([[Xv], [Yv]])
+
+            verts = patch[0].get_path().vertices
+            verts[:, 0] = body_xy[0, :]
+            verts[:, 1] = body_xy[1, :]
     def show(self):
         plt.show()
 
+    def add_traffic(self, traffic_list, length=4.0, width=1.8):
+        """
+        Register OtherVehicle objects to be drawn.
+        Each vehicle will be drawn as a simple rectangle.
+        """
+        self.traffic = traffic_list
+        self.traffic_patches = []
+
+        # Base rectangle centered at rear axle reference
+        half_w = width / 2
+        body = np.array([
+            [0, length, length, 0, 0],
+            [half_w, half_w, -half_w, -half_w, half_w]
+        ])  # shape (2,5)
+
+        self.traffic_body = body
+
+        # Create patches on figure
+        for veh in traffic_list:
+            patch = self.ax.fill(
+                body[0, :], body[1, :],
+                facecolor=[0.3, 0.3, 1.0],   # blue-ish
+                edgecolor='k',
+                alpha=0.9,
+                zorder=1
+            )
+            self.traffic_patches.append(patch)
 
 def create_animation(vis, x_traj, u_traj, dt):
     """
@@ -150,9 +197,15 @@ def create_animation(vis, x_traj, u_traj, dt):
     ymin, ymax = Y.min() - pad, Y.max() + pad
     vis.ax.set_xlim(xmin, xmax)
     vis.ax.set_ylim(ymin, ymax)
+
     def update(i):
         vis.draw(x_traj[:, i], u_traj[:, i], i * dt)
+
+        for car in vis.traffic:
+            car.step(dt)
+        
         return []
+    
 
     ani = animation.FuncAnimation(
         vis.fig, update, frames=x_traj.shape[1], interval=dt * 1000, blit=False
