@@ -108,74 +108,149 @@ class DrakeMPC(LeafSystem):
     # ------------------------------------------------------------
     # MPC Solve Step
     # ------------------------------------------------------------
+    # def solve_mpc(self, x0, ref):
+    #     cfg = self.cfg
+    #     prog = MathematicalProgram()
+
+    #     # Coerce shapes
+    #     x0 = np.asarray(x0, dtype=float).reshape(cfg.NX,)
+    #     ref = np.asarray(ref, dtype=float).reshape(cfg.NX, cfg.T + 1)
+
+    #     # Decision vars
+    #     x = prog.NewContinuousVariables(cfg.NX, cfg.T + 1, "x")
+    #     u = prog.NewContinuousVariables(cfg.NU, cfg.T, "u")
+
+    #     # ----- Initial state: add constraints component-wise -----
+    #     for i in range(cfg.NX):
+    #         prog.AddLinearConstraint(x[i, 0] == x0[i])
+
+    #     # ----- Dynamics constraints -----
+    #     for k in range(cfg.T):
+    #         xk = x[:, k]
+    #         uk = u[:, k]
+    #         x_next = x[:, k + 1]
+
+    #         #x_dyn = self.discrete_dynamics(xk, uk)
+    #         x_dyn = self.discrete_dynamics(xk, uk)
+    #         for i in range(cfg.NX):
+    #             prog.AddConstraint(x_next[i] == x_dyn[i])
+
+    #     # ----- State bounds -----
+    #     for k in range(cfg.T + 1):
+    #         # vector sum of X and Y velocity components
+    #         prog.AddConstraint(np.linalg.norm(x[3, k], x[4,k] <= cfg.MAX_SPEED))
+    #         prog.AddConstraint(np.linalg.norm(x[3, k], x[4,k] >= cfg.MIN_SPEED))
+
+    #     # ----- Input bounds -----
+    #     prog.AddBoundingBoxConstraint(-cfg.MAX_ACCEL, cfg.MAX_ACCEL, u[1, :])
+    #     prog.AddBoundingBoxConstraint(cfg.MIN_STEER, cfg.MAX_STEER, u[0, :])
+
+    #     # ----- Objective function -----
+    #     cost = 0.0
+
+    #     # Tracking cost over horizon
+    #     for k in range(cfg.T):
+    #         e = x[:, k] - ref[:, k]
+    #         cost += e @ cfg.Q @ e
+
+    #     # Terminal cost
+    #     eT = x[:, cfg.T] - ref[:, cfg.T]
+    #     cost += eT @ cfg.Qf @ eT
+
+    #     # Input effort
+    #     for k in range(cfg.T):
+    #         cost += u[:, k] @ cfg.R @ u[:, k]
+
+    #     # Input smoothness
+    #     for k in range(cfg.T - 1):
+    #         du = u[:, k + 1] - u[:, k]
+    #         cost += du @ cfg.Rd @ du
+
+    #     prog.AddCost(cost)
+
+    #     result = self.solver.Solve(prog)
+
+    #     if not result.is_success():
+    #         # You can log more info here if you like
+    #         print("WARNING: MPC solve failed; returning zero control")
+    #         return np.array([0.0, 0.0])
+
+    #     u0 = result.GetSolution(u[:, 0])
+    #     return np.array(u0).reshape(cfg.NU,)
+
     def solve_mpc(self, x0, ref):
         cfg = self.cfg
         prog = MathematicalProgram()
 
-        # Coerce shapes
-        x0 = np.asarray(x0, dtype=float).reshape(cfg.NX,)
-        ref = np.asarray(ref, dtype=float).reshape(cfg.NX, cfg.T + 1)
+        # --- Shapes ---
+        x0 = np.asarray(x0, float).reshape(cfg.NX,)
+        ref = np.asarray(ref, float).reshape(cfg.NX, cfg.T + 1)
 
-        # Decision vars
+        # --- Decision Variables ---
         x = prog.NewContinuousVariables(cfg.NX, cfg.T + 1, "x")
         u = prog.NewContinuousVariables(cfg.NU, cfg.T, "u")
 
-        # ----- Initial state: add constraints component-wise -----
+        # ========== Initial condition ==========
         for i in range(cfg.NX):
             prog.AddLinearConstraint(x[i, 0] == x0[i])
 
-        # ----- Dynamics constraints -----
+        # ========== Linearized dynamics ==========
+        # linearize around the reference trajectory
         for k in range(cfg.T):
             xk = x[:, k]
             uk = u[:, k]
-            x_next = x[:, k + 1]
+            x_next = x[:, k+1]
 
-            x_dyn = self.discrete_dynamics(xk, uk)
+            # linearization point
+            x_lin = ref[:, k]
+            u_lin = np.zeros(cfg.NU)
+
+            # compute A_d, B_d
+            A_d, B_d = self.model.discrete_time_linearized_dynamics(
+                x_lin, u_lin, self.cfg.DT
+            )
+
+            # add linear constraints:  x_{k+1} = A x_k + B u_k
             for i in range(cfg.NX):
-                prog.AddConstraint(x_next[i] == x_dyn[i])
+                prog.AddLinearConstraint(
+                    x_next[i] == A_d[i,:] @ xk + B_d[i,:] @ uk
+                )
 
-        # ----- State bounds -----
+        # ========== Bounds ==========
         for k in range(cfg.T + 1):
-            # vector sum of X and Y velocity components
-            prog.AddConstraint(np.linalg.norm(x[3, k], x[4,k] <= cfg.MAX_SPEED))
-            prog.AddConstraint(np.linalg.norm(x[3, k], x[4,k] >= cfg.MIN_SPEED))
+            # speed constraint: sqrt(vx^2 + vy^2) <= Vmax
+            # MUST be linear → so convert to TWO linear constraints:
+            prog.AddLinearConstraint(x[3, k] <= cfg.MAX_SPEED)
+            prog.AddLinearConstraint(x[3, k] >= cfg.MIN_SPEED)
+            prog.AddLinearConstraint(x[4, k] <= cfg.MAX_SPEED)
+            prog.AddLinearConstraint(x[4, k] >= -cfg.MAX_SPEED)
 
-        # ----- Input bounds -----
-        prog.AddBoundingBoxConstraint(-cfg.MAX_ACCEL, cfg.MAX_ACCEL, u[1, :])
         prog.AddBoundingBoxConstraint(cfg.MIN_STEER, cfg.MAX_STEER, u[0, :])
+        prog.AddBoundingBoxConstraint(-cfg.MAX_ACCEL, cfg.MAX_ACCEL, u[1, :])
 
-        # ----- Objective function -----
-        cost = 0.0
-
-        # Tracking cost over horizon
+        # ========== Cost ==========
+        cost = 0
         for k in range(cfg.T):
             e = x[:, k] - ref[:, k]
             cost += e @ cfg.Q @ e
+            cost += u[:, k] @ cfg.R @ u[:, k]
 
-        # Terminal cost
         eT = x[:, cfg.T] - ref[:, cfg.T]
         cost += eT @ cfg.Qf @ eT
 
-        # Input effort
-        for k in range(cfg.T):
-            cost += u[:, k] @ cfg.R @ u[:, k]
-
-        # Input smoothness
         for k in range(cfg.T - 1):
             du = u[:, k + 1] - u[:, k]
             cost += du @ cfg.Rd @ du
 
         prog.AddCost(cost)
 
+        # ========== Solve ==========
         result = self.solver.Solve(prog)
-
         if not result.is_success():
-            # You can log more info here if you like
-            print("WARNING: MPC solve failed; returning zero control")
-            return np.array([0.0, 0.0])
+            print("MPC failed")
+            return np.zeros(cfg.NU)
 
-        u0 = result.GetSolution(u[:, 0])
-        return np.array(u0).reshape(cfg.NU,)
+        return result.GetSolution(u[:, 0])
 
     # ------------------------------------------------------------
     # Drake Output Port: returns control command
