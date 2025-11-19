@@ -7,7 +7,7 @@ from Bicycle_Model.bicycle_model_dynamics import VehicleBicycleModel
 class DrakeMPCConfig:
     NX = 6  # [x, y, psi, vx, vy, w] (positions(2), yaw angle(1), velocities(2), yaw rate(1))
     NU = 2  # [delta, a] (steering angle and longitudinal accel)
-    T = 15  # time horizon (sec)
+    T = 15 # time horizon (sec)
     DT = 0.1
 
     # vehicle params (must match bicycle model: Lf=1.1, Lr=1.1)
@@ -44,7 +44,7 @@ class DrakeMPC(LeafSystem):
         self.ref_provider = reference_provider
 
         #set up vehicle bicycle model with parameters from other files
-        self.model = VehicleBicycleModel(m = 1000, IZ = 2500, Lf=1.1, Lr = 1.1, Cf = 80000, Cr = 80000, d_limit = np.deg2rad(30))
+        self.model = VehicleBicycleModel(m = 1000, Iz = 2500, Lf=1.1, Lr = 1.1, Cf = 80000, Cr = 80000, d_limit = np.deg2rad(30))
         # Input port: full vehicle state [x, y, v, yaw]
         self.DeclareVectorInputPort("state", BasicVector(self.cfg.NX))
 
