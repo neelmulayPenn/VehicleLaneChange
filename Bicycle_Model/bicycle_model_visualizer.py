@@ -1,7 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.animation as animation
+import planners.env
 
+# TODO: add RoadGeometry Object as in input to draw lanes easily for each animation
 class VehicleBicycleVisualizer:
     def __init__(self, Lf=1.1, Lr=1.1, width=1.0, show_velocity=True, show_trail=True):
         """
@@ -138,18 +140,23 @@ class VehicleBicycleVisualizer:
         
         for veh, patch in zip(self.traffic, self.traffic_patches):
             Xv, Yv = veh.x, veh.y
-            psi_v = 0.0  # OtherVehicle always points +X
+            psi_v = veh.psi
 
             Rv = np.array([
                 [np.cos(psi_v), -np.sin(psi_v)],
                 [np.sin(psi_v),  np.cos(psi_v)]
             ])
+            # Rotate traffic vehicle around its center
+            center = np.mean(self.traffic_body, axis=1, keepdims=True)  # shape (2,1)
+            body_rel = self.traffic_body - center
+            body_rot = Rv @ body_rel + center
 
-            body_xy = Rv @ self.traffic_body + np.array([[Xv], [Yv]])
+            body_xy = body_rot + np.array([[Xv], [Yv]])
 
             verts = patch[0].get_path().vertices
             verts[:, 0] = body_xy[0, :]
             verts[:, 1] = body_xy[1, :]
+
     def show(self):
         plt.show()
 
@@ -174,40 +181,38 @@ class VehicleBicycleVisualizer:
         for veh in traffic_list:
             patch = self.ax.fill(
                 body[0, :], body[1, :],
-                facecolor=[0.3, 0.3, 1.0],   # blue-ish
+                facecolor=[0.3, 0.3, 1.0],
                 edgecolor='k',
                 alpha=0.9,
                 zorder=1
             )
             self.traffic_patches.append(patch)
 
-def create_animation(vis, x_traj, u_traj, dt):
+def create_animation(vis, x_traj, u_traj, obstacle_trajs, dt):
     """
-    Creates an animation for the given vehicle visualizer.
-    Args:
-        vis: VehicleBicycleVisualizer
-        x_traj: ndarray (6, N)
-        u_traj: ndarray (2, N)
-        dt: float timestep [s]
+    obstacle_trajs: (N, M, 4) → x,y,v,lane for each timestep
     """
-    pad = 5.0  # padding around trajectory
-    X = x_traj[0, :]
-    Y = x_traj[1, :]
-    xmin, xmax = X.min() - pad, X.max() + pad
-    ymin, ymax = Y.min() - pad, Y.max() + pad
-    vis.ax.set_xlim(xmin, xmax)
-    vis.ax.set_ylim(ymin, ymax)
+
+    N = x_traj.shape[1]
+    M = obstacle_trajs.shape[1]
+
+    # Ensure visualizer has correct number of traffic objects
+    if len(vis.traffic) != M:
+        raise ValueError("Visualizer traffic count does not match obstacle_trajs")
 
     def update(i):
+
+        # Update traffic positions from simulation log
+        for car_idx, car in enumerate(vis.traffic):
+            car.s = obstacle_trajs[i, car_idx, 4]
+            car.update_xy()  # recomputes x, y from s along road
+
+        # Draw ego and traffic
         vis.draw(x_traj[:, i], u_traj[:, i], i * dt)
 
-        for car in vis.traffic:
-            car.step(dt)
-        
         return []
-    
 
     ani = animation.FuncAnimation(
-        vis.fig, update, frames=x_traj.shape[1], interval=dt * 1000, blit=False
+        vis.fig, update, frames=N, interval=dt * 1000, blit=False
     )
     return ani
