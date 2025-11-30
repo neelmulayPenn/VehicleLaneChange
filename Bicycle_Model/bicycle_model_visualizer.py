@@ -170,10 +170,17 @@ class VehicleBicycleVisualizer:
 
         # Base rectangle centered at rear axle reference
         half_w = width / 2
+        half_len = length / 2
+        # body = np.array([
+        #     [0, length, length, 0, 0],
+        #     [half_w, half_w, -half_w, -half_w, half_w]
+        # ])  # shape (2,5)
+
+        #NEEL's change - please tell me if this breaks some other stuff
         body = np.array([
-            [0, length, length, 0, 0],
-            [half_w, half_w, -half_w, -half_w, half_w]
-        ])  # shape (2,5)
+        [-half_len,  half_len,  half_len, -half_len, -half_len],
+        [ half_w,    half_w,   -half_w,  -half_w,   half_w]
+        ])
 
         self.traffic_body = body
 

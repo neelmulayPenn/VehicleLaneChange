@@ -28,23 +28,6 @@ class IntersectionGeometry:
         """Return center of a given lane (scalar)."""
         return self.lanes[direction][lane_id]
 
-    def lane_lines(self, direction):
-        """Return list of (xs, ys) for all lane centerlines."""
-        lines = []
-        for offset in self.lanes[direction]:
-            if direction in ["east", "west"]:
-                xs = np.linspace(-self.road_length, self.road_length, 500)
-                ys = np.full_like(xs, offset)
-                if direction == "west":
-                    xs = xs[::-1]
-            elif direction in ["north", "south"]:
-                ys = np.linspace(-self.road_length, self.road_length, 500)
-                xs = np.full_like(ys, offset)
-                if direction == "south":
-                    ys = ys[::-1]
-            lines.append((xs, ys))
-        return lines
-
     def straight_path(self, direction, lane_id=0, N=500):
         """Return centerline path (x, y) for a specific lane."""
         lane_offset = self.lanes[direction][lane_id]
