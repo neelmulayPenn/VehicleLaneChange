@@ -18,7 +18,7 @@ class IntersectionReferenceProvider:
 
         self.path_x, self.path_y = geometry.straight_path(direction, lane_id, N=500)
 
-    def get_ref_horizon(self, x0, T, dt):
+    def get_ref_horizon(self, x0, T, dt, traj_req=None):
         """
         Returns reference of shape (6, T+1):
         [x, y, psi, vx, vy, yaw_rate]
@@ -38,6 +38,18 @@ class IntersectionReferenceProvider:
         if len(xs) < steps:
             xs = np.pad(xs, (0, steps-len(xs)), constant_values=xs[-1])
             ys = np.pad(ys, (0, steps-len(ys)), constant_values=ys[-1])
+
+        # Apply lateral lane-change if requested
+        if traj_req is not None and traj_req.lateral_coeffs is not None:
+            a0, a1, a2, a3, a4, a5 = traj_req.lateral_coeffs
+            t_local = np.arange(steps) * dt - traj_req.maneuver_start_time
+            # clamp t_local to [0, maneuver_duration]
+            t_local = np.clip(t_local, 0.0, traj_req.maneuver_duration)
+            lateral_offset = a0 + a1*t_local + a2*t_local**2 + a3*t_local**3 + a4*t_local**4 + a5*t_local**5
+            ys += lateral_offset
+
+        if traj_req is not None:
+            self.speed = traj_req.v_ref
 
         # Compute heading
         psi = np.arctan2(np.diff(ys, prepend=ys[0]), np.diff(xs, prepend=xs[0]))
